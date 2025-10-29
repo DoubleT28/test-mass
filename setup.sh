@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🚀 Setting up Ara Araass Checker on Ubuntu..."
+echo "🚀 Setting up Zo Card Checker on Ubuntu..."
 
 # Update system
 sudo apt update && sudo apt upgrade -y
