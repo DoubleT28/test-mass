@@ -1,0 +1,16 @@
+[Unit]
+Description=Zo Card Checker Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Zo-Card-Checker-Bot
+ExecStart=/home/ubuntu/Zo-Card-Checker-Bot/botenv/bin/python /home/ubuntu/Zo-Card-Checker-Bot/bot.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
