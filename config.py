@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Bot Configuration
-BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
-ADMIN_ID = os.getenv('ADMIN_ID', 'YOUR_ADMIN_ID_HERE')
+BOT_TOKEN = os.getenv('BOT_TOKEN', '8077915640:AAE0ntUcx_EwMR2IJi7XaxeuB6rs4606_i0E')
+ADMIN_ID = os.getenv('ADMIN_ID', '841100316')
 
 # File paths
 CONFIG_FILE = 'data/config.json'
