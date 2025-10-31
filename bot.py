@@ -1,5 +1,5 @@
-async def send_combined_status(chat_id, session, current_card="", response=""):
-    """Send combined checking log and status like in the photo"""
+async def send_combined_status(chat_id, session, current_card="", response="", hit_details=None):
+    """Send combined checking log and status with hit details"""
     progress = (session['processed'] / session['total']) * 100 if session['total'] > 0 else 0
     progress = round(progress, 2)
     
@@ -12,6 +12,16 @@ async def send_combined_status(chat_id, session, current_card="", response=""):
         # Checking log section
         message += f"CHECKING : {current_card}\n"
         message += f"RESPONSE : {response}\n"
+    
+    # Add hit details if available (CCN/INSUFFICIENT/LIVE cards)
+    if hit_details:
+        message += f"\n--- HIT FOUND ---\n"
+        message += f"💳 Card: {hit_details['card']}\n"
+        message += f"📡 Response: {hit_details['response']}\n"
+        message += f"💰 Amount: {hit_details.get('amount', '$1.00')}\n"
+        message += f"🏦 Issuer: {hit_details.get('issuer', 'Unknown')}\n"
+        message += f"🔐 VBV: {hit_details.get('vbv_status', 'Unknown')}\n"
+        message += "---\n\n"
     
     # Progress and status section
     message += f"PROGRESS : {progress}% ({session['processed']}/{session['total']})\n\n"
@@ -72,6 +82,8 @@ def process_card_file(chat_id, file_path):
                 continue
             
             response_text = ""
+            hit_details = None
+            
             if payment_result and payment_result[0]:
                 random_info = random_user_info()
                 if random_info[0]:
@@ -90,12 +102,39 @@ def process_card_file(chat_id, file_path):
                             session['live'] += 1
                             session['hit'] += 1
                             response_text = f"LIVE - {donate_result[2]}"
+                            # Create hit details for LIVE cards
+                            bin_info = get_bin_info(cc_no)
+                            hit_details = {
+                                'card': card,
+                                'response': f"CVV LIVE - {donate_result[2]}",
+                                'amount': donate_result[4] if len(donate_result) > 4 else "$1.00",
+                                'issuer': f"{bin_info['bank']}, {bin_info['brand']}, {bin_info['type']}, {bin_info['country']}",
+                                'vbv_status': vbv_status
+                            }
                         elif donate_result[1] == "ccn":
                             session['ccn'] += 1
                             response_text = f"CCN - {donate_result[2]}"
+                            # Create hit details for CCN cards
+                            bin_info = get_bin_info(cc_no)
+                            hit_details = {
+                                'card': card,
+                                'response': f"CCN - Security Code Is Wrong",
+                                'amount': donate_result[4] if len(donate_result) > 4 else "$1.00",
+                                'issuer': f"{bin_info['bank']}, {bin_info['brand']}, {bin_info['type']}, {bin_info['country']}",
+                                'vbv_status': vbv_status
+                            }
                         elif donate_result[1] == "insufficient":
                             session['insufficient'] += 1
                             response_text = "Insufficient Funds"
+                            # Create hit details for INSUFFICIENT cards
+                            bin_info = get_bin_info(cc_no)
+                            hit_details = {
+                                'card': card,
+                                'response': "You Balance Is Lower Than $1.00",
+                                'amount': donate_result[4] if len(donate_result) > 4 else "$1.00",
+                                'issuer': f"{bin_info['bank']}, {bin_info['brand']}, {bin_info['type']}, {bin_info['country']}",
+                                'vbv_status': vbv_status
+                            }
                         else:
                             response_text = f"Declined - {donate_result[2]}"
                     else:
@@ -108,8 +147,8 @@ def process_card_file(chat_id, file_path):
             session['processed'] += 1
             save_session(session)
             
-            # Update combined status after each card check
-            asyncio.run(send_combined_status(chat_id, session, card, response_text))
+            # Update combined status after each card check with hit details
+            asyncio.run(send_combined_status(chat_id, session, card, response_text, hit_details))
             
             # Zeta delay between checks - 3 fucking minutes
             if i < len(lines) - 1:
