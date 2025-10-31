@@ -1,5 +1,6 @@
 import os
-
+# Add this to your config.py
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 # Bot Configuration
 BOT_TOKEN = "8077915640:AAE0ntUcx_EwMR2IJi7XaxeuB6rs4606_i0"  # @BotFather ကနေ token ထည့်ပါ
 ADMIN_ID = "841100316"     # ကိုယ့် Telegram user ID ထည့်ပါ
